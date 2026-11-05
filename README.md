@@ -14,8 +14,10 @@ committed.
   (one-off, newsletter, or a multi-step drip), subject lines, preview text, and body copy.
 - **QA before it ships.** Checks links, UTM tags, merge-tag fallbacks, unsubscribe and address,
   alt text, and plain-text, against a pre-send checklist.
-- **Creates drafts, not surprises.** Everything starts as a draft in your ESP. It never sends or
-  schedules without an explicit, specific yes, and it offers a test send to your own inbox first.
+- **Creates drafts, not surprises.** Everything starts as a draft in your ESP. The send and
+  schedule commands are gated in code behind a campaign-specific confirmation phrase that carries
+  the live recipient count, so a vague "looks good" cannot trip them. It offers a test send to
+  your own inbox first.
 - **Reads back performance.** After a send, pulls the handful of numbers that matter for the
   goal: opens, clicks, unsubscribes, top links. It reports only what the API returns and never
   invents a result.
@@ -60,8 +62,11 @@ non-consented lists.
 | File | What it's for |
 |---|---|
 | `SKILL.md` | The workflow Claude follows: intake, plan, draft, QA, draft-create, confirm, schedule, report. |
+| `scripts/mailchimp_api.py` | A safe Mailchimp client so no API call is hand-written. Reads the key from the environment, masks it everywhere, and gates send and schedule behind a confirmation phrase. |
+| `scripts/qa_check.py` | The automated pre-send QA pass. Checks links, UTM tags, merge-tag fallbacks, subject, spam tells, unsubscribe, address, alt text, and dashes. Non-zero exit is a hard gate. |
 | `references/mailchimp-api.md` | The Mailchimp Marketing API v3 endpoint map, auth, and request bodies. |
-| `references/qa-checklist.md` | The pre-send QA checklist. |
+| `references/esp-generic.md` | How to map the same workflow onto SendGrid, HubSpot, Klaviyo, or Customer.io. |
+| `references/qa-checklist.md` | The pre-send QA checklist, with the automated checks marked. |
 | `examples/example-run.md` | One campaign walked end to end, prompt to scheduled send. |
 
 ## Example prompts

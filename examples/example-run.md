@@ -34,20 +34,21 @@ A worked example of the skill in connected mode, from prompt to scheduled send. 
 
 ## 4. QA
 
-Ran `references/qa-checklist.md`. Link resolves and carries
-`utm_source=email&utm_medium=campaign&utm_campaign=trial_reengage`. Merge tag has a fallback.
-Unsubscribe and address present. Plain-text generated. No em dashes. No invented stats; the
-`[X% of trials that came back converted]` claim was pulled because it could not be verified.
+Saved the HTML as `draft.html` and the settings as `meta.json`, then ran the automated pass:
+```bash
+python3 -I scripts/qa_check.py --html draft.html --meta meta.json
+```
+It came back `14 passed, 0 warnings, 0 failures`. The link resolves and carries
+`utm_source=email&utm_medium=campaign&utm_campaign=trial_reengage`, the merge tag has a fallback,
+unsubscribe and address are present, no em dashes. Then walked the human half by eye. No invented
+stats; the `[X% of trials that came back converted]` claim was pulled because it could not be
+verified.
 
 ## 5. Create as a draft
 
 ```bash
-DC="${MAILCHIMP_API_KEY##*-}"
-BASE="https://$DC.api.mailchimp.com/3.0"
-# create draft
-curl -sS -u "key:$MAILCHIMP_API_KEY" -X POST "$BASE/campaigns" -d '{ ...settings... }'
-# set content
-curl -sS -u "key:$MAILCHIMP_API_KEY" -X PUT "$BASE/campaigns/CAMPAIGN_ID/content" -d '{ "html": "..." }'
+python3 -I scripts/mailchimp_api.py campaign-create --json campaign.json   # prints draft id
+python3 -I scripts/mailchimp_api.py content-set --campaign CAMPAIGN_ID --html draft.html
 ```
 
 Reported back: campaign ID, and a note that it is a draft visible in their Mailchimp account.
@@ -55,17 +56,29 @@ Nothing sent.
 
 ## 6. Confirm, test, schedule
 
-- Offered a test send to the user's inbox first.
-- Showed the pre-send summary: audience `[N]` people, from `Brittany at Acme`, subject as above,
-  proposed schedule Tuesday 9:00am ET (13:00 UTC).
-- User replied "yes, schedule it for Tuesday 9am ET." Only then:
+- Sent a test to the user's own inbox first:
   ```bash
-  curl -sS -u "key:$MAILCHIMP_API_KEY" -X POST "$BASE/campaigns/CAMPAIGN_ID/actions/schedule" \
-    -d '{ "schedule_time": "2026-08-25T13:00:00+00:00" }'
+  python3 -I scripts/mailchimp_api.py test --campaign CAMPAIGN_ID --to brittany@acme.com
   ```
+- Showed the pre-send summary from live data, which also prints the exact confirm phrase:
+  ```bash
+  python3 -I scripts/mailchimp_api.py preview --campaign CAMPAIGN_ID --at 2026-08-25T13:00:00+00:00
+  ```
+  Audience `[N]` people, from `Brittany at Acme`, subject as above, schedule Tuesday 9:00am ET
+  (13:00 UTC). The required phrase was `SCHEDULE campaign CAMPAIGN_ID for 2026-08-25T13:00:00+00:00 to [N] recipients`.
+- User replied "yes, schedule it for Tuesday 9am ET." Only then, passing that exact phrase back:
+  ```bash
+  python3 -I scripts/mailchimp_api.py schedule --campaign CAMPAIGN_ID \
+    --at 2026-08-25T13:00:00+00:00 \
+    --confirm "SCHEDULE campaign CAMPAIGN_ID for 2026-08-25T13:00:00+00:00 to [N] recipients"
+  ```
+  A "looks good" would not have matched the phrase, so the gate would have refused it.
 
 ## 7. Read back (after it sends)
 
-`GET /reports/CAMPAIGN_ID`: sends `[N]`, open rate `[X]%`, click rate `[Y]%`, unsubscribes `[Z]`,
-top link the `Book 15 minutes` CTA. Reported the handful tied to the goal. If pulled too early,
-said "no meaningful data yet, check back tomorrow" rather than reporting zeros.
+```bash
+python3 -I scripts/mailchimp_api.py report --campaign CAMPAIGN_ID
+```
+Sends `[N]`, open rate `[X]%`, click rate `[Y]%`, unsubscribes `[Z]`, top link the
+`Book 15 minutes` CTA. Reported the handful tied to the goal. If pulled too early, said
+"no meaningful data yet, check back tomorrow" rather than reporting zeros.
