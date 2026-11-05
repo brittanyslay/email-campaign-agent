@@ -49,7 +49,11 @@ Two modes, and you pick based on whether a key is present:
 - **Never send or schedule without an explicit, specific confirmation.** "Yes, send it" or
   "yes, schedule it for Tuesday 9am ET" counts. "Looks good" does not. Before any send, show a
   one-screen summary: audience name and recipient count, from name and email, subject line,
-  send or schedule time, and a reminder that this goes to real people. Wait for the yes.
+  send or schedule time, and a reminder that this goes to real people. Wait for the yes. The
+  send and schedule commands in `scripts/mailchimp_api.py` enforce this in code: they refuse to
+  run unless you pass a `--confirm` phrase that matches a campaign-specific string carrying the
+  live recipient count, which a vague or stale approval cannot produce. Do not route around the
+  script to send by hand.
 - **Prefer a test send first.** Offer to send a test to the user's own inbox before the real
   send. It is the cheapest way to catch a broken link or a merge tag that did not resolve.
 - **Respect consent and the law.** Only mail people who opted in. No purchased, scraped, or
@@ -74,6 +78,19 @@ Ask only what you cannot infer. You need:
 
 If the user is vague, propose a sensible default, state it, and keep moving. Do not interrogate.
 
+You have two helper scripts so you never hand-write an API call and the send gate lives in
+code, not just in this file. Run them isolated and read the key from the environment:
+- `scripts/mailchimp_api.py`: every Mailchimp call you need (audiences, segments, create a
+  draft, set content, test, report, preview, send, schedule). It reads `MAILCHIMP_API_KEY`
+  from the environment, masks it in all output, refuses a key passed on the command line, and
+  gates `send` and `schedule` behind a campaign-specific confirmation phrase (see step 6).
+- `scripts/qa_check.py`: the automated half of the QA pass (step 4).
+
+```bash
+python3 -I scripts/mailchimp_api.py lists
+python3 -I scripts/qa_check.py --html draft.html --meta meta.json
+```
+
 ### 2. Plan
 Lay out the campaign in a few lines the user can approve at a glance: audience and segment
 logic, the send structure (single email, or the steps and delays of a drip), the timing, and
@@ -94,30 +111,64 @@ hand back a rough first draft for the user to fix; producing a strong draft is y
 theirs. The user manages; they do not rewrite.
 
 ### 4. QA pass
-Run the checklist in `references/qa-checklist.md` before anything is created. The essentials:
-subject and preview render and are not truncated, every link resolves and carries the right
-UTM tags, every merge tag has a fallback, the unsubscribe link and mailing address are present,
-images have alt text, the from and reply-to are correct, and the plain-text version is not
-empty. Fix what you can. Flag what needs the user (a real link, a real number in `[brackets]`).
+Run the automated check, then the human checklist. Both must pass before anything is created.
+
+Save the drafted HTML and a small metadata file, then run the script. It is a hard gate: a
+non-zero exit means do not create or send until the failures are fixed.
+```bash
+python3 -I scripts/qa_check.py --html draft.html --meta meta.json
+```
+It checks subject length and spam tells, that preview does not repeat the subject, that every
+link resolves and carries UTM tags, that every merge tag has a fallback, that the unsubscribe
+link and mailing address are present, that images have alt text, that the from address is not a
+free inbox, that the plain-text part is not empty, and that no em dashes or en dashes slipped in.
+Then run the rest of `references/qa-checklist.md` by eye for what a script cannot judge (does the
+subject match the body, does the copy read like a person wrote it). Fix what you can. Flag what
+needs the user (a real link, a real number in `[brackets]`).
 
 ### 5. Create as a draft
-In connected mode, create the campaign through the API as a draft, set its recipients (list and
-segment), settings (subject, from, reply-to), and content. Use the endpoint mapping in
-`references/mailchimp-api.md`. Do not send. Report back the campaign ID or a link to it in the
-ESP, and the exact settings you used, so the user can see it in their own account.
+In connected mode, create the campaign through the API as a draft with the script, set its
+recipients (list and segment), settings, and content. Do not send.
+```bash
+python3 -I scripts/mailchimp_api.py campaign-create --json campaign.json   # prints the draft id
+python3 -I scripts/mailchimp_api.py content-set --campaign CAMPAIGN_ID --html draft.html
+```
+`references/mailchimp-api.md` has the request-body shapes. Report back the campaign ID and the
+exact settings you used, so the user can see the draft in their own account.
 
 In planning-only mode, output the finished copy and settings as text or a file and tell the user
 where to paste each piece.
 
 ### 6. Confirm, then schedule or send
-Show the one-screen pre-send summary from the safety rules. Offer the test send. Only on an
-explicit, specific yes do you schedule (set the send time) or send. If the user says hold it,
-leave it as a draft and stop. Never send a second time to "make sure it went."
+Offer the test send first:
+```bash
+python3 -I scripts/mailchimp_api.py test --campaign CAMPAIGN_ID --to you@yourdomain.com
+```
+Then show the one-screen pre-send summary. The `preview` command prints it from live data,
+including the exact confirmation phrase the send gate will require:
+```bash
+python3 -I scripts/mailchimp_api.py preview --campaign CAMPAIGN_ID             # for a send now
+python3 -I scripts/mailchimp_api.py preview --campaign CAMPAIGN_ID --at 2026-08-25T13:00:00+00:00   # for a schedule
+```
+Show that summary to the user and wait. The send and schedule commands refuse to run unless you
+pass back a `--confirm` phrase that matches exactly, and that phrase carries the live recipient
+count, so "looks good" or a stale approval cannot pass it. Only after an explicit, specific yes:
+```bash
+python3 -I scripts/mailchimp_api.py send --campaign CAMPAIGN_ID --confirm "SEND campaign CAMPAIGN_ID to N recipients"
+python3 -I scripts/mailchimp_api.py schedule --campaign CAMPAIGN_ID --at 2026-08-25T13:00:00+00:00 --confirm "SCHEDULE campaign CAMPAIGN_ID for 2026-08-25T13:00:00+00:00 to N recipients"
+```
+If the user says hold it, leave it as a draft and stop. The script also refuses to send a
+campaign that already shows status sent, sending, or scheduled, so you cannot send twice to
+"make sure it went."
 
 ### 7. Read back performance
-Once a campaign has sent, pull the report on request: sends, opens, open rate, clicks, click
-rate, unsubscribes, bounces, and the top clicked links. Present the handful that matter for the
-goal, not a data dump. If the campaign is too fresh for meaningful numbers, say so and offer to
+Once a campaign has sent, pull the report on request:
+```bash
+python3 -I scripts/mailchimp_api.py report --campaign CAMPAIGN_ID
+python3 -I scripts/mailchimp_api.py clicks --campaign CAMPAIGN_ID
+```
+Present the handful that matter for the goal: sends, opens, open rate, clicks, click rate,
+unsubscribes, bounces, and the top clicked links. Not a data dump. If the campaign is too fresh for meaningful numbers, say so and offer to
 check back later. Report only what the API returns; flag gaps in `[brackets]`.
 
 ## Mailchimp API mapping (guidance you follow in connected mode)
@@ -193,8 +244,10 @@ back to planning-only if you are unsure of its API.
 - `plan this campaign, I'm not giving you a key`
 - `map this drip onto SendGrid instead of Mailchimp`
 
-See `references/mailchimp-api.md` for the full endpoint detail and `references/qa-checklist.md`
-for the pre-send checklist. `examples/example-run.md` walks one campaign end to end.
+See `references/mailchimp-api.md` for the full endpoint detail, `references/qa-checklist.md`
+for the pre-send checklist, and `references/esp-generic.md` for mapping the workflow onto a
+non-Mailchimp ESP. `scripts/mailchimp_api.py` and `scripts/qa_check.py` are the tools you run.
+`examples/example-run.md` walks one campaign end to end.
 
 ---
 Author: Brittany Slay (https://brittanyslay.com). Licensed for noncommercial use only; see LICENSE.
