@@ -250,6 +250,22 @@ def check_voice(html, meta, r):
         r.warn("Copy still has [bracketed] placeholders. Fill or remove them before sending.")
 
 
+def _visible_text(html):
+    # What the reader actually sees: drop script/style blocks and all tags so we
+    # scan the copy, not href targets or alt attributes.
+    no_blocks = re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", html)
+    return re.sub(r"(?s)<[^>]+>", " ", no_blocks)
+
+
+def check_body_spam(html, r):
+    text = _visible_text(html).lower()
+    hits = sorted({t for t in SPAM_TELLS if t in text})
+    if hits:
+        r.warn("Body copy contains spam tells: %s. They trip filters; reword them." % ", ".join(hits))
+    else:
+        r.ok("Body copy is free of common spam tells.")
+
+
 def main():
     p = argparse.ArgumentParser(prog="qa_check.py", description="Automated pre-send email QA.")
     p.add_argument("--html", required=True, help="Drafted email HTML file, or - for stdin.")
@@ -277,6 +293,7 @@ def main():
     check_from(meta, r)
     check_images(html, r)
     check_plain_text(meta, html, r)
+    check_body_spam(html, r)
     check_voice(html, meta, r)
     code = r.render()
     if code:
